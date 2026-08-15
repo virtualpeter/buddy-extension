@@ -1,0 +1,100 @@
+{
+  "name": "buddy",
+  "displayName": "BuddyScript",
+  "description": "Language support for buddyscript (.buddy files)",
+  "version": "0.0.0",
+  "publisher": "virtualpete",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/virtualpeter/buddy-extension.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:buddy"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "buddy",
+        "aliases": [
+          "BuddyScript",
+          "buddyscript",
+          "buddy"
+        ],
+        "extensions": [
+          ".buddy"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "buddy",
+        "scopeName": "source.buddy",
+        "path": "./syntaxes/buddy.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "buddy.installCli",
+        "title": "Buddy: Download CLI"
+      }
+    ],
+    "configuration": {
+      "title": "Buddy",
+      "properties": {
+        "buddy.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the buddy executable. Empty: use buddy on PATH, otherwise download from GitHub Releases."
+        },
+        "buddy.cli.version": {
+          "type": "string",
+          "default": "latest",
+          "description": "buddy CLI release tag to download when buddy.path is empty (latest or e.g. v9.0.2)."
+        },
+        "buddy.lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Optional override for the language server command. When empty, runs `lsp` on the resolved buddy CLI."
+        },
+        "buddy.cellMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable -e / REPL dialect (top-level if/for and global reassign) in the language server."
+        },
+        "buddy.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VS Code/Cursor and buddy lsp."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node ./scripts/esbuild.js",
+    "watch": "node ./scripts/esbuild.js --watch",
+    "check": "tsc -p ./ --noEmit",
+    "package": "node ./scripts/package.js",
+    "vscode:prepublish": "node ./scripts/esbuild.js --minify"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.3.3",
+    "vscode-languageclient": "^9.0.1"
+  }
+}
