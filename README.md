@@ -19,6 +19,8 @@ Default extension id: `virtualpete.buddy`.
 
 ## Install
 
+Download `buddy-<version>.vsix` from [Releases](https://github.com/virtualpeter/buddy-extension/releases), then:
+
 ```sh
 cursor --install-extension buddy-0.2.0.vsix
 # or: code --install-extension buddy-0.2.0.vsix
@@ -70,3 +72,12 @@ npm run compile
 Open this folder in VS Code or Cursor and press **F5** to launch an Extension Development Host.
 
 Buddy LSP notes: [buddy docs/editor.md](https://github.com/virtualpeter/buddy/blob/main/docs/editor.md).
+
+## Release
+
+Push a version tag. GitHub Actions runs `make package` and attaches `buddy-<version>.vsix` to the GitHub Release.
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```

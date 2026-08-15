@@ -15,6 +15,7 @@ Language features come from **`buddy lsp`** in the sibling CLI repo: [`../buddy`
 | `scripts/esbuild.js` | Bundle → `out/extension.js` |
 | `scripts/package.js` | `vsce package`; version from git tag; `PUBLISHER` / `VERSION` override |
 | `Makefile` | `make` / `package` / `compile` / `check` / `clean` |
+| `.github/workflows/release.yml` | On `v*` tag: package VSIX and attach to the GitHub Release |
 
 ## Build
 
