@@ -1,0 +1,14 @@
+---
+description: buddy-extension is a thin BuddyScript LSP client; language features live in buddy lsp
+alwaysApply: true
+---
+
+# buddy-extension
+
+This workspace is the VS Code/Cursor **BuddyScript** extension only (`.buddy` files).
+
+- **Client:** `src/extension.ts` starts `buddy lsp` over stdio (`vscode-languageclient`). Resolves the binary via `buddy.path`, PATH, or a GitHub Release (`src/cli.ts`). Optional `buddy.lsp.path` replaces that command. `buddy.cellMode` is `initializationOptions.cellMode`.
+- **Not here:** completions, hover, diagnostics, builtins, Jamf APIs. Those are `buddy lsp` in the sibling repo `../buddy` (`internal/lsp`). Edit that repo and rebuild buddy; do not invent a second language server.
+- **Grammar:** `syntaxes/buddy.tmLanguage.json` — touch only when `.buddy` syntax changes.
+- **Build:** `make` / `make package` → `buddy-<version>.vsix`. `PUBLISHER` defaults to `virtualpete`. `make compile` / `make check` / `make clean`.
+- Keep diffs small. Do not add Jamf, auth, or buddy CLI commands to this package.
