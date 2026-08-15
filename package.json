@@ -44,8 +44,20 @@
       {
         "command": "buddy.installCli",
         "title": "Buddy: Download CLI"
+      },
+      {
+        "command": "buddy.registerMcp",
+        "title": "Buddy: Register MCP in Cursor"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "buddy.registerMcp",
+          "when": "buddy.isCursor"
+        }
+      ]
+    },
     "configuration": {
       "title": "Buddy",
       "properties": {
@@ -63,6 +75,21 @@
           "type": "string",
           "default": "",
           "description": "Optional override for the language server command. When empty, runs `lsp` on the resolved buddy CLI."
+        },
+        "buddy.mcp.setup": {
+          "type": "string",
+          "enum": [
+            "off",
+            "prompt",
+            "on"
+          ],
+          "enumDescriptions": [
+            "Do not register buddy as a Cursor MCP server.",
+            "Ask in Cursor if ~/.cursor/mcp.json has no buddy entry.",
+            "Write ~/.cursor/mcp.json in Cursor using the resolved buddy CLI."
+          ],
+          "default": "off",
+          "description": "Cursor only. Register the resolved buddy CLI as an MCP server via `buddy mcp setup`. Ignored in VS Code."
         },
         "buddy.cellMode": {
           "type": "boolean",

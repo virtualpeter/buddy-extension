@@ -10,6 +10,7 @@ Language features come from **`buddy lsp`** in the sibling CLI repo: [`../buddy`
 |------|------|
 | `src/extension.ts` | Activate: resolve buddy, start `buddy lsp` (or `buddy.lsp.path`) over stdio |
 | `src/cli.ts` | PATH / `buddy.path` / GitHub Releases install into global storage |
+| `src/mcp.ts` | Cursor-only: `buddy mcp setup` into `~/.cursor/mcp.json` |
 | `syntaxes/buddy.tmLanguage.json` | TextMate grammar |
 | `language-configuration.json` | Comments, brackets, etc. |
 | `scripts/esbuild.js` | Bundle → `out/extension.js` |
@@ -31,7 +32,8 @@ Default extension id: `virtualpete.buddy`. VSIX version is the git tag (`v0.2.0`
 ## Rules
 
 - Do **not** reimplement LSP features here. Change `buddy lsp` in `../buddy/internal/lsp` (then `make buddy` in that repo).
-- Settings: `buddy.path` (empty → PATH, then GitHub Releases), `buddy.cli.version` (`latest` or a tag), `buddy.lsp.path` (full command override), `buddy.cellMode` (passed as `initializationOptions.cellMode`), `buddy.trace.server`.
+- Settings: `buddy.path` (empty → PATH, then GitHub Releases), `buddy.cli.version` (`latest` or a tag), `buddy.lsp.path` (full command override), `buddy.mcp.setup` (`off` / `prompt` / `on`, Cursor only), `buddy.cellMode` (passed as `initializationOptions.cellMode`), `buddy.trace.server`.
+- MCP: call the resolved CLI (`buddy -y mcp setup --write --create --path ~/.cursor/mcp.json`). Do not merge `mcp.json` here.
 - Release assets on `virtualpeter/buddy` must be bare binaries named `buddy-{os}-{arch}[.exe]` (`darwin`/`linux`/`windows` × `amd64`/`arm64`).
 - Keep the client thin. Grammar updates only when `.buddy` syntax changes.
 - No Jamf/tenant/auth work in this repo.

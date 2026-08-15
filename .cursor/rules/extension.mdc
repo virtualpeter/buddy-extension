@@ -7,7 +7,7 @@ alwaysApply: true
 
 This workspace is the VS Code/Cursor **BuddyScript** extension only (`.buddy` files).
 
-- **Client:** `src/extension.ts` starts `buddy lsp` over stdio (`vscode-languageclient`). Resolves the binary via `buddy.path`, PATH, or a GitHub Release (`src/cli.ts`). Optional `buddy.lsp.path` replaces that command. `buddy.cellMode` is `initializationOptions.cellMode`.
+- **Client:** `src/extension.ts` starts `buddy lsp` over stdio (`vscode-languageclient`). Resolves the binary via `buddy.path`, PATH, or a GitHub Release (`src/cli.ts`). Optional `buddy.lsp.path` replaces that command. `buddy.cellMode` is `initializationOptions.cellMode`. In Cursor, `buddy.mcp.setup` / **Buddy: Register MCP in Cursor** runs `buddy mcp setup` (`src/mcp.ts`); do not reimplement `mcp.json` merging.
 - **Not here:** completions, hover, diagnostics, builtins, Jamf APIs. Those are `buddy lsp` in the sibling repo `../buddy` (`internal/lsp`). Edit that repo and rebuild buddy; do not invent a second language server.
 - **Grammar:** `syntaxes/buddy.tmLanguage.json` — touch only when `.buddy` syntax changes.
 - **Build:** `make` / `make package` → `buddy-<version>.vsix`. `PUBLISHER` defaults to `virtualpete`. `make compile` / `make check` / `make clean`.

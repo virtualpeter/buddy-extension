@@ -41,6 +41,8 @@ Resolution order:
 
 Command Palette → **Buddy: Download CLI** forces a re-download (and GitHub sign-in when the repo is private). `GITHUB_TOKEN` / `GH_TOKEN` also work.
 
+In Cursor, **Buddy: Register MCP in Cursor** runs `buddy mcp setup` with that resolved binary and writes `~/.cursor/mcp.json`. `buddy.mcp.setup` is `off` (default), `prompt`, or `on`. VS Code ignores this.
+
 Expected release asset names (bare binaries, not archives):
 
 | Platform | Asset |
@@ -58,6 +60,7 @@ Expected release asset names (bare binaries, not archives):
 |---------|---------|-------------|
 | `buddy.path` | _(empty)_ | Path to the buddy executable; empty uses PATH then GitHub Releases |
 | `buddy.cli.version` | `latest` | Release tag to download when managing the CLI |
+| `buddy.mcp.setup` | `off` | Cursor only: `off` / `prompt` / `on` to register `buddy mcp` |
 | `buddy.lsp.path` | _(empty)_ | Override LSP command |
 | `buddy.cellMode` | `false` | Notebook/`-e` dialect in the language server |
 | `buddy.trace.server` | `off` | LSP client/server trace level |
