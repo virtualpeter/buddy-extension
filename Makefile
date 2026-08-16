@@ -1,4 +1,6 @@
 PUBLISHER ?= virtualpete
+CLI_REPO ?= virtualpeter/buddy
+CLI_PROVIDER ?= auto
 
 .PHONY: all package compile check clean help
 
@@ -14,11 +16,13 @@ compile: node_modules
 check: node_modules
 	npm run check
 
-# VSIX next to package.json (buddy-<git-tag>.vsix). Override publisher / version:
+# VSIX next to package.json (buddy-<git-tag>.vsix). Override publisher / version / CLI repo:
 #   make package PUBLISHER=otherorg
 #   make package VERSION=0.2.0
+#   make package CLI_REPO=otherorg/buddy
+#   make package CLI_REPO=https://git.example.com/org/buddy CLI_PROVIDER=gitlab
 package: node_modules
-	PUBLISHER=$(PUBLISHER) VERSION=$(VERSION) npm run package
+	PUBLISHER=$(PUBLISHER) VERSION=$(VERSION) CLI_REPO=$(CLI_REPO) CLI_PROVIDER=$(CLI_PROVIDER) npm run package
 
 clean:
 	rm -rf node_modules out *.vsix
@@ -32,4 +36,6 @@ help:
 	@echo "  make clean           - remove node_modules, out, *.vsix"
 	@echo ""
 	@echo "PUBLISHER=$(PUBLISHER) (extension id $(PUBLISHER).buddy)"
+	@echo "CLI_REPO=$(CLI_REPO) (baked into buddy.cli.repo default)"
+	@echo "CLI_PROVIDER=$(CLI_PROVIDER) (auto / github / gitlab)"
 	@echo "VERSION from git tag (v0.2.0 → 0.2.0), or VERSION=..."

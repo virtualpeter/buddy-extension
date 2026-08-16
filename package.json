@@ -4,6 +4,7 @@
   "description": "Language support for buddyscript (.buddy files)",
   "version": "0.0.0",
   "publisher": "virtualpete",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/virtualpeter/buddy-extension.git"
@@ -70,6 +71,26 @@
           "type": "string",
           "default": "latest",
           "description": "buddy CLI release tag to download when buddy.path is empty (latest or e.g. v9.0.2)."
+        },
+        "buddy.cli.repo": {
+          "type": "string",
+          "default": "virtualpeter/buddy",
+          "description": "Release source: owner/name (github.com) or a GitHub/GitLab URL, including GitHub Enterprise. Overridable at package time with CLI_REPO=."
+        },
+        "buddy.cli.provider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "github",
+            "gitlab"
+          ],
+          "enumDescriptions": [
+            "Detect from the host (github / gitlab in the hostname, otherwise github.com for owner/name).",
+            "GitHub.com or GitHub Enterprise (/api/v3).",
+            "GitLab.com or self-managed GitLab (/api/v4)."
+          ],
+          "default": "auto",
+          "description": "Release API when buddy.cli.repo is a URL whose host is not obviously GitHub or GitLab. CLI_PROVIDER= at package time."
         },
         "buddy.lsp.path": {
           "type": "string",

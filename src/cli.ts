@@ -2,8 +2,106 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-/** GitHub repo that publishes buddy CLI release assets. */
-export const CLI_REPO = "virtualpeter/buddy";
+/** Fallback when `buddy.cli.repo` is empty or invalid. */
+export const DEFAULT_CLI_REPO = "virtualpeter/buddy";
+
+export type CliProvider = "github" | "gitlab";
+
+export interface ReleaseSource {
+  provider: CliProvider;
+  /** Cache / log id, e.g. github.com/owner/name or git.example.com/group/proj */
+  id: string;
+  host: string;
+  project: string;
+  apiBase: string;
+}
+
+export function cliReleaseSource(): ReleaseSource {
+  const config = vscode.workspace.getConfiguration("buddy");
+  const raw = (config.get<string>("cli.repo") || "").trim() || DEFAULT_CLI_REPO;
+  const hint = (config.get<string>("cli.provider") || "auto").trim().toLowerCase();
+  const source = parseReleaseSource(raw, hint);
+  if (!source) {
+    throw new Error(
+      `buddy.cli.repo must be owner/name or a GitHub/GitLab URL (got "${raw}"). Set buddy.cli.provider if the host is not obvious.`
+    );
+  }
+  return source;
+}
+
+export function parseReleaseSource(raw: string, providerHint = "auto"): ReleaseSource | undefined {
+  const trimmed = raw.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let host = "github.com";
+  let project = "";
+  if (/^https?:\/\//i.test(trimmed)) {
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      return undefined;
+    }
+    host = url.hostname.toLowerCase();
+    project = url.pathname
+      .replace(/^\//, "")
+      .replace(/\/+$/, "")
+      .replace(/\.git$/i, "")
+      .replace(/\/(releases|tags|tree|blob)(\/.*)?$/i, "");
+  } else if (/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.test(trimmed)) {
+    project = trimmed;
+  } else {
+    return undefined;
+  }
+  if (!project || project.includes(" ")) {
+    return undefined;
+  }
+
+  const provider = detectProvider(host, providerHint);
+  if (!provider) {
+    return undefined;
+  }
+  return {
+    provider,
+    id: `${host}/${project}`,
+    host,
+    project,
+    apiBase: apiBaseFor(provider, host),
+  };
+}
+
+function detectProvider(host: string, hint: string): CliProvider | undefined {
+  if (hint === "github" || hint === "gitlab") {
+    return hint;
+  }
+  if (host.includes("gitlab")) {
+    return "gitlab";
+  }
+  if (host.includes("github") || host === "gist.github.com") {
+    return "github";
+  }
+  if (host === "github.com" || host === "api.github.com") {
+    return "github";
+  }
+  // owner/name shorthand already forced host github.com; unknown URL hosts need a hint.
+  return host === "github.com" ? "github" : undefined;
+}
+
+function apiBaseFor(provider: CliProvider, host: string): string {
+  if (provider === "gitlab") {
+    return `https://${host}/api/v4`;
+  }
+  if (host === "github.com" || host === "api.github.com") {
+    return "https://api.github.com";
+  }
+  return `https://${host}/api/v3`;
+}
+
+function cacheKey(source: ReleaseSource): string {
+  return source.id.replace(/[^A-Za-z0-9._-]/g, "_");
+}
 
 const USER_AGENT = "virtualpete.buddy";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -17,16 +115,17 @@ export interface CliState {
   lastCheck: number;
 }
 
-interface GitHubAsset {
-  id: number;
+interface ReleaseAsset {
   name: string;
   size: number;
-  browser_download_url: string;
+  downloadUrl: string;
+  /** GitHub private-asset API URL when a token is present. */
+  apiDownloadUrl?: string;
 }
 
-interface GitHubRelease {
+interface Release {
   tag_name: string;
-  assets: GitHubAsset[];
+  assets: ReleaseAsset[];
 }
 
 export interface ResolveOptions {
@@ -50,7 +149,7 @@ export function preferredAssetName(os: string, arch: string): string {
   return os === "windows" ? `buddy-${os}-${arch}.exe` : `buddy-${os}-${arch}`;
 }
 
-export function pickReleaseAsset(assets: GitHubAsset[], os: string, arch: string): GitHubAsset | undefined {
+export function pickReleaseAsset(assets: ReleaseAsset[], os: string, arch: string): ReleaseAsset | undefined {
   const preferred = preferredAssetName(os, arch);
   const exact = assets.find((a) => a.name === preferred);
   if (exact) {
@@ -99,7 +198,7 @@ export function findOnPath(command: string): string | undefined {
 
 /**
  * Resolve the buddy executable: explicit `buddy.path`, then PATH, then a
- * GitHub Release downloaded into extension global storage.
+ * release downloaded into extension global storage.
  */
 export async function resolveBuddyPath(
   context: vscode.ExtensionContext,
@@ -119,7 +218,7 @@ export async function resolveBuddyPath(
       void vscode.window.showErrorMessage(`Buddy CLI not found at "${configured}". Check buddy.path or run Buddy: Download CLI.`);
       return undefined;
     }
-    log.appendLine("buddy.path is \"buddy\" but it is not on PATH; trying GitHub Releases.");
+    log.appendLine("buddy.path is \"buddy\" but it is not on PATH; trying release download.");
   } else {
     const onPath = findOnPath("buddy");
     if (onPath && !options.force) {
@@ -136,8 +235,8 @@ export async function resolveBuddyPath(
     return managed;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.appendLine(`GitHub CLI install failed: ${message}`);
-    void vscode.window.showErrorMessage(`Could not install buddy from GitHub Releases. ${message}`);
+    log.appendLine(`CLI install failed: ${message}`);
+    void vscode.window.showErrorMessage(`Could not install buddy from releases. ${message}`);
     return undefined;
   }
 }
@@ -153,19 +252,21 @@ async function ensureManagedCli(
   }
 
   const versionSetting = (vscode.workspace.getConfiguration("buddy").get<string>("cli.version") || "latest").trim() || "latest";
+  const source = cliReleaseSource();
+  const key = cacheKey(source);
   const storageRoot = context.globalStorageUri.fsPath;
   await fs.promises.mkdir(storageRoot, { recursive: true });
 
-  const state = readState(storageRoot);
+  const state = readState(storageRoot, key);
   const now = Date.now();
   const wantLatest = versionSetting === "latest";
 
-  if (!options.force && state && managedBinaryExists(storageRoot, state.tag, triple.exe)) {
+  if (!options.force && state && managedBinaryExists(storageRoot, key, state.tag, triple.exe)) {
     const pinOk = !wantLatest && tagsMatch(state.tag, versionSetting);
     const latestFresh = wantLatest && now - state.lastCheck < CHECK_INTERVAL_MS;
     if (pinOk || latestFresh) {
-      await pruneOldCli(storageRoot, [state.tag, state.previousTag], log);
-      return managedBinaryPath(storageRoot, state.tag, triple.exe);
+      await pruneOldCli(storageRoot, key, [state.tag, state.previousTag], log);
+      return managedBinaryPath(storageRoot, key, state.tag, triple.exe);
     }
   }
 
@@ -177,30 +278,30 @@ async function ensureManagedCli(
     },
     async (progress) => {
       progress.report({ message: "Fetching buddy CLI release…" });
-      const { release, token } = await fetchRelease(versionSetting, options.interactiveAuth === true, log);
+      const { release, token } = await fetchRelease(source, versionSetting, options.interactiveAuth === true, log);
       const asset = pickReleaseAsset(release.assets, triple.os, triple.arch);
       if (!asset) {
         const names = release.assets.map((a) => a.name).join(", ") || "(none)";
         throw new Error(
-          `${CLI_REPO} ${release.tag_name} has no ${preferredAssetName(triple.os, triple.arch)} asset. Found: ${names}`
+          `${source.id} ${release.tag_name} has no ${preferredAssetName(triple.os, triple.arch)} asset. Found: ${names}`
         );
       }
 
-      const dest = managedBinaryPath(storageRoot, release.tag_name, triple.exe);
+      const dest = managedBinaryPath(storageRoot, key, release.tag_name, triple.exe);
       if (!options.force && fs.existsSync(dest)) {
         const next = nextCliState(state, release.tag_name, asset.name, now);
-        writeState(storageRoot, next);
-        await pruneOldCli(storageRoot, [next.tag, next.previousTag], log);
+        writeState(storageRoot, key, next);
+        await pruneOldCli(storageRoot, key, [next.tag, next.previousTag], log);
         return dest;
       }
 
       const mb = asset.size > 0 ? `${(asset.size / (1024 * 1024)).toFixed(1)} MB` : "";
       progress.report({ message: `Downloading ${asset.name}${mb ? ` (${mb})` : ""}…` });
-      log.appendLine(`Downloading ${asset.name} from ${CLI_REPO} ${release.tag_name}`);
-      await downloadAsset(asset, dest, token);
+      log.appendLine(`Downloading ${asset.name} from ${source.id} ${release.tag_name}`);
+      await downloadAsset(source, asset, dest, token);
       const next = nextCliState(state, release.tag_name, asset.name, now);
-      writeState(storageRoot, next);
-      await pruneOldCli(storageRoot, [next.tag, next.previousTag], log);
+      writeState(storageRoot, key, next);
+      await pruneOldCli(storageRoot, key, [next.tag, next.previousTag], log);
       log.appendLine(`Installed ${dest}`);
       return dest;
     }
@@ -219,10 +320,11 @@ function nextCliState(prev: CliState | undefined, tag: string, asset: string, la
 /** Keep the current and previous managed binaries; delete older tag folders. */
 async function pruneOldCli(
   storageRoot: string,
+  repo: string,
   keepTags: Array<string | undefined>,
   log: vscode.OutputChannel
 ): Promise<void> {
-  const cliRoot = path.join(storageRoot, "cli");
+  const cliRoot = managedCliRoot(storageRoot, repo);
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(cliRoot, { withFileTypes: true });
@@ -245,12 +347,16 @@ async function pruneOldCli(
   }
 }
 
-function managedBinaryPath(storageRoot: string, tag: string, exe: string): string {
-  return path.join(storageRoot, "cli", sanitizeTag(tag), exe);
+function managedCliRoot(storageRoot: string, key: string): string {
+  return path.join(storageRoot, "cli", key);
 }
 
-function managedBinaryExists(storageRoot: string, tag: string, exe: string): boolean {
-  return fs.existsSync(managedBinaryPath(storageRoot, tag, exe));
+function managedBinaryPath(storageRoot: string, repo: string, tag: string, exe: string): string {
+  return path.join(managedCliRoot(storageRoot, repo), sanitizeTag(tag), exe);
+}
+
+function managedBinaryExists(storageRoot: string, repo: string, tag: string, exe: string): boolean {
+  return fs.existsSync(managedBinaryPath(storageRoot, repo, tag, exe));
 }
 
 function sanitizeTag(tag: string): string {
@@ -265,13 +371,13 @@ function tagsMatch(a: string, b: string): boolean {
   return a === b || normalizeTag(a) === normalizeTag(b);
 }
 
-function statePath(storageRoot: string): string {
-  return path.join(storageRoot, STATE_FILE);
+function statePath(storageRoot: string, repo: string): string {
+  return path.join(managedCliRoot(storageRoot, repo), STATE_FILE);
 }
 
-function readState(storageRoot: string): CliState | undefined {
+function readState(storageRoot: string, repo: string): CliState | undefined {
   try {
-    const raw = fs.readFileSync(statePath(storageRoot), "utf8");
+    const raw = fs.readFileSync(statePath(storageRoot, repo), "utf8");
     const parsed = JSON.parse(raw) as CliState;
     if (parsed && typeof parsed.tag === "string" && typeof parsed.lastCheck === "number") {
       return parsed;
@@ -282,26 +388,28 @@ function readState(storageRoot: string): CliState | undefined {
   return undefined;
 }
 
-function writeState(storageRoot: string, state: CliState): void {
-  fs.writeFileSync(statePath(storageRoot), JSON.stringify(state, null, 2) + "\n");
+function writeState(storageRoot: string, repo: string, state: CliState): void {
+  const dest = statePath(storageRoot, repo);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, JSON.stringify(state, null, 2) + "\n");
 }
 
 async function fetchRelease(
+  source: ReleaseSource,
   version: string,
   interactiveAuth: boolean,
   log: vscode.OutputChannel
-): Promise<{ release: GitHubRelease; token?: string }> {
-  const token = await githubToken(interactiveAuth);
+): Promise<{ release: Release; token?: string }> {
+  const token = await releaseToken(source, interactiveAuth);
   const tryTags = version === "latest" ? ["latest"] : uniqueTags(version);
   let lastErr: Error | undefined;
 
   for (const tag of tryTags) {
-    const url =
-      tag === "latest"
-        ? `https://api.github.com/repos/${CLI_REPO}/releases/latest`
-        : `https://api.github.com/repos/${CLI_REPO}/releases/tags/${encodeURIComponent(tag)}`;
     try {
-      const release = await githubJson<GitHubRelease>(url, token);
+      const release =
+        source.provider === "gitlab"
+          ? await fetchGitLabRelease(source, tag, token)
+          : await fetchGitHubRelease(source, tag, token);
       return { release, token };
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
@@ -310,11 +418,74 @@ async function fetchRelease(
   }
 
   if (!token) {
-    throw new Error(
-      `No GitHub release for ${CLI_REPO} (${version}). If the repo is private, sign in to GitHub (Buddy: Download CLI) or set GITHUB_TOKEN. ${lastErr?.message ?? ""}`.trim()
-    );
+    const hint =
+      source.provider === "gitlab"
+        ? "Set GITLAB_TOKEN or GL_TOKEN."
+        : source.host === "github.com"
+          ? "Sign in to GitHub (Buddy: Download CLI) or set GITHUB_TOKEN."
+          : "Set GITHUB_TOKEN or GH_TOKEN for this GitHub Enterprise host.";
+    throw new Error(`No release for ${source.id} (${version}). If the repo is private, ${hint} ${lastErr?.message ?? ""}`.trim());
   }
-  throw lastErr ?? new Error(`No GitHub release for ${CLI_REPO} (${version})`);
+  throw lastErr ?? new Error(`No release for ${source.id} (${version})`);
+}
+
+async function fetchGitHubRelease(source: ReleaseSource, tag: string, token?: string): Promise<Release> {
+  const url =
+    tag === "latest"
+      ? `${source.apiBase}/repos/${source.project}/releases/latest`
+      : `${source.apiBase}/repos/${source.project}/releases/tags/${encodeURIComponent(tag)}`;
+  const raw = await apiJson<{
+    tag_name: string;
+    assets: Array<{ id: number; name: string; size: number; browser_download_url: string }>;
+  }>(url, source, token);
+  return {
+    tag_name: raw.tag_name,
+    assets: (raw.assets || []).map((a) => ({
+      name: a.name,
+      size: a.size,
+      downloadUrl: a.browser_download_url,
+      apiDownloadUrl: `${source.apiBase}/repos/${source.project}/releases/assets/${a.id}`,
+    })),
+  };
+}
+
+async function fetchGitLabRelease(source: ReleaseSource, tag: string, token?: string): Promise<Release> {
+  const project = encodeURIComponent(source.project);
+  const url =
+    tag === "latest"
+      ? `${source.apiBase}/projects/${project}/releases/permalink/latest`
+      : `${source.apiBase}/projects/${project}/releases/${encodeURIComponent(tag)}`;
+  try {
+    return gitlabReleaseFromJson(await apiJson<GitLabReleaseJson>(url, source, token));
+  } catch (err) {
+    if (tag !== "latest") {
+      throw err;
+    }
+    const list = await apiJson<GitLabReleaseJson[]>(`${source.apiBase}/projects/${project}/releases`, source, token);
+    if (!Array.isArray(list) || list.length === 0) {
+      throw err;
+    }
+    return gitlabReleaseFromJson(list[0]);
+  }
+}
+
+interface GitLabReleaseJson {
+  tag_name: string;
+  assets?: { links?: Array<{ name?: string; url?: string; direct_asset_url?: string }>; sources?: unknown[] };
+}
+
+function gitlabReleaseFromJson(raw: GitLabReleaseJson): Release {
+  const links = raw.assets?.links || [];
+  return {
+    tag_name: raw.tag_name,
+    assets: links
+      .map((link) => ({
+        name: (link.name || "").trim(),
+        size: 0,
+        downloadUrl: (link.direct_asset_url || link.url || "").trim(),
+      }))
+      .filter((a) => a.name && a.downloadUrl),
+  };
 }
 
 function uniqueTags(version: string): string[] {
@@ -327,10 +498,16 @@ function uniqueTags(version: string): string[] {
   return [...new Set(tags)];
 }
 
-async function githubToken(interactive: boolean): Promise<string | undefined> {
-  const env = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+async function releaseToken(source: ReleaseSource, interactive: boolean): Promise<string | undefined> {
+  if (source.provider === "gitlab") {
+    return process.env.GITLAB_TOKEN || process.env.GL_TOKEN || process.env.PRIVATE_TOKEN;
+  }
+  const env = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GHE_TOKEN;
   if (env) {
     return env;
+  }
+  if (source.host !== "github.com") {
+    return undefined;
   }
   try {
     const session = await vscode.authentication.getSession(
@@ -344,34 +521,42 @@ async function githubToken(interactive: boolean): Promise<string | undefined> {
   }
 }
 
-async function githubJson<T>(url: string, token?: string): Promise<T> {
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "User-Agent": USER_AGENT,
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
+function apiHeaders(source: ReleaseSource, token?: string, download = false): Record<string, string> {
+  const headers: Record<string, string> = { "User-Agent": USER_AGENT };
+  if (source.provider === "gitlab") {
+    headers.Accept = download ? "application/octet-stream" : "application/json";
+    if (token) {
+      headers["PRIVATE-TOKEN"] = token;
+    }
+    return headers;
+  }
+  headers.Accept = download ? "application/octet-stream" : "application/vnd.github+json";
+  if (!download) {
+    headers["X-GitHub-Api-Version"] = "2022-11-28";
+  }
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  const res = await fetch(url, { headers });
+  return headers;
+}
+
+async function apiJson<T>(url: string, source: ReleaseSource, token?: string): Promise<T> {
+  const res = await fetch(url, { headers: apiHeaders(source, token) });
   if (!res.ok) {
     const body = (await res.text()).slice(0, 240);
-    throw new Error(`GitHub ${res.status} ${url}: ${body}`);
+    throw new Error(`${source.provider} ${res.status} ${url}: ${body}`);
   }
   return (await res.json()) as T;
 }
 
-async function downloadAsset(asset: GitHubAsset, dest: string, token?: string): Promise<void> {
-  const url = token
-    ? `https://api.github.com/repos/${CLI_REPO}/releases/assets/${asset.id}`
-    : asset.browser_download_url;
-  const headers: Record<string, string> = {
-    "User-Agent": USER_AGENT,
-  };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-    headers.Accept = "application/octet-stream";
-  }
+async function downloadAsset(
+  source: ReleaseSource,
+  asset: ReleaseAsset,
+  dest: string,
+  token?: string
+): Promise<void> {
+  const url = token && asset.apiDownloadUrl ? asset.apiDownloadUrl : asset.downloadUrl;
+  const headers = apiHeaders(source, token, true);
 
   const res = await fetch(url, { headers, redirect: "follow" });
   if (!res.ok) {
