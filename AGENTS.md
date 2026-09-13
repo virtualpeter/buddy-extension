@@ -11,6 +11,7 @@ Language features come from **`buddy lsp`** in the sibling CLI repo: [`../buddy`
 | `src/extension.ts` | Activate: resolve buddy, start `buddy lsp` (or `buddy.lsp.path`) over stdio |
 | `src/cli.ts` | PATH / `buddy.path` / GitHub Releases install into global storage |
 | `src/mcp.ts` | Cursor-only: `buddy mcp setup` into `~/.cursor/mcp.json` |
+| `images/buddy.png` | Extension / marketplace icon (from `../buddy/internal/serve/buddy.png`) |
 | `syntaxes/buddy.tmLanguage.json` | TextMate grammar |
 | `language-configuration.json` | Comments, brackets, etc. |
 | `scripts/esbuild.js` | Bundle → `out/extension.js` |

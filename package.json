@@ -5,6 +5,7 @@
   "version": "0.0.0",
   "publisher": "virtualpete",
   "license": "MIT",
+  "icon": "images/buddy.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/virtualpeter/buddy-extension.git"

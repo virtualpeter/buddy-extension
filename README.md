@@ -1,5 +1,7 @@
 # BuddyScript (VS Code / Cursor)
 
+<img src="images/buddy.png" alt="buddy" width="128" height="128">
+
 Thin editor client for buddyscript (`.buddy` files): syntax highlighting plus an LSP client that starts `buddy lsp`.
 
 The language server lives in the [buddy](https://github.com/virtualpeter/buddy) CLI (`buddy lsp`). This package does not embed that binary. On activate it uses `buddy.path`, then `buddy` on `PATH`, then downloads a GitHub Release from `virtualpeter/buddy` into extension storage.
