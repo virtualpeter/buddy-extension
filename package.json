@@ -45,7 +45,7 @@
     "commands": [
       {
         "command": "buddy.installCli",
-        "title": "Buddy: Download CLI"
+        "title": "Buddy: Install CLI"
       },
       {
         "command": "buddy.registerMcp",
@@ -66,12 +66,12 @@
         "buddy.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the buddy executable. Empty: use buddy on PATH, otherwise download from GitHub Releases."
+          "description": "Path to the buddy executable. Empty: use an installed buddy (PATH or the macOS package), otherwise prompt to install from a release."
         },
         "buddy.cli.version": {
           "type": "string",
           "default": "latest",
-          "description": "buddy CLI release tag to download when buddy.path is empty (latest or e.g. v9.0.2)."
+          "description": "buddy CLI release tag to offer when buddy is not installed (latest or e.g. v9.0.2)."
         },
         "buddy.cli.repo": {
           "type": "string",

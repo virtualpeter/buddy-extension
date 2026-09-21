@@ -79,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const buddyPath = await resolveBuddyPath(context, output);
     if (!buddyPath) {
       output.appendLine(
-        "Buddy CLI not resolved; syntax highlighting still works. Run Buddy: Download CLI or set buddy.path."
+        "Buddy CLI not resolved; syntax highlighting still works. Run Buddy: Install CLI or set buddy.path."
       );
     } else {
       resolvedBuddy = buddyPath;

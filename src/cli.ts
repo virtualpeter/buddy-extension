@@ -1,6 +1,15 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+
+const DECLINED_TAG_KEY = "buddy.declinedCliTag";
+
+/** Well-known paths from the notarized macOS package. */
+const MAC_PKG_INSTALL_PATHS = [
+  "/usr/local/bin/buddy",
+  "/Applications/Buddy.app/Contents/Helpers/buddy",
+];
 
 /** Fallback when `buddy.cli.repo` is empty or invalid. */
 export const DEFAULT_CLI_REPO = "virtualpeter/buddy";
@@ -145,12 +154,28 @@ export function targetTriple(): { os: string; arch: string; exe: string } | unde
   return { os, arch, exe: os === "windows" ? "buddy.exe" : "buddy" };
 }
 
-export function preferredAssetName(os: string, arch: string): string {
-  return os === "windows" ? `buddy-${os}-${arch}.exe` : `buddy-${os}-${arch}`;
+export function preferredAssetName(osName: string, arch: string): string {
+  return osName === "windows" ? `buddy-${osName}-${arch}.exe` : `buddy-${osName}-${arch}`;
 }
 
-export function pickReleaseAsset(assets: ReleaseAsset[], os: string, arch: string): ReleaseAsset | undefined {
-  const preferred = preferredAssetName(os, arch);
+export function preferredPkgName(tag: string): string {
+  return `buddy-${tag.replace(/^v/i, "")}.pkg`;
+}
+
+export function pickPkgAsset(assets: ReleaseAsset[], tag: string): ReleaseAsset | undefined {
+  const preferred = preferredPkgName(tag);
+  const exact = assets.find((a) => a.name === preferred);
+  if (exact) {
+    return exact;
+  }
+  return assets.find((a) => {
+    const n = a.name.toLowerCase();
+    return n.endsWith(".pkg") && !n.includes("sha256") && n.startsWith("buddy");
+  });
+}
+
+export function pickReleaseAsset(assets: ReleaseAsset[], osName: string, arch: string): ReleaseAsset | undefined {
+  const preferred = preferredAssetName(osName, arch);
   const exact = assets.find((a) => a.name === preferred);
   if (exact) {
     return exact;
@@ -160,11 +185,11 @@ export function pickReleaseAsset(assets: ReleaseAsset[], os: string, arch: strin
     if (n.includes("sha256") || n.endsWith(".sbom") || n.endsWith(".sig") || n.endsWith(".pem")) {
       return false;
     }
-    if (n.endsWith(".tar.gz") || n.endsWith(".tgz") || n.endsWith(".zip")) {
+    if (n.endsWith(".tar.gz") || n.endsWith(".tgz") || n.endsWith(".zip") || n.endsWith(".pkg")) {
       return false;
     }
     const archOk = n.includes(arch) || (arch === "amd64" && (n.includes("x86_64") || n.includes("x64")));
-    return n.includes(os) && archOk;
+    return n.includes(osName) && archOk;
   });
 }
 
@@ -196,9 +221,25 @@ export function findOnPath(command: string): string | undefined {
   return undefined;
 }
 
+/** PATH, then the macOS package locations (`/usr/local/bin/buddy`, Buddy.app helper). */
+export function findInstalledBuddy(): string | undefined {
+  const onPath = findOnPath("buddy");
+  if (onPath) {
+    return onPath;
+  }
+  if (process.platform === "darwin") {
+    for (const candidate of MAC_PKG_INSTALL_PATHS) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return undefined;
+}
+
 /**
- * Resolve the buddy executable: explicit `buddy.path`, then PATH, then a
- * release downloaded into extension global storage.
+ * Resolve the buddy executable: explicit `buddy.path`, then PATH / the macOS
+ * package install, then a prompted release install (pkg on macOS, binary elsewhere).
  */
 export async function resolveBuddyPath(
   context: vscode.ExtensionContext,
@@ -215,15 +256,15 @@ export async function resolveBuddyPath(
       return local;
     }
     if (configured.includes("/") || configured.includes("\\") || configured !== "buddy") {
-      void vscode.window.showErrorMessage(`Buddy CLI not found at "${configured}". Check buddy.path or run Buddy: Download CLI.`);
+      void vscode.window.showErrorMessage(`Buddy CLI not found at "${configured}". Check buddy.path or run Buddy: Install CLI.`);
       return undefined;
     }
-    log.appendLine("buddy.path is \"buddy\" but it is not on PATH; trying release download.");
+    log.appendLine("buddy.path is \"buddy\" but it is not on PATH; looking for a release install.");
   } else {
-    const onPath = findOnPath("buddy");
-    if (onPath && !options.force) {
-      log.appendLine(`Using buddy on PATH: ${onPath}`);
-      return onPath;
+    const installed = findInstalledBuddy();
+    if (installed && !options.force) {
+      log.appendLine(`Using installed buddy: ${installed}`);
+      return installed;
     }
   }
 
@@ -245,7 +286,7 @@ async function ensureManagedCli(
   context: vscode.ExtensionContext,
   log: vscode.OutputChannel,
   options: ResolveOptions
-): Promise<string> {
+): Promise<string | undefined> {
   const triple = targetTriple();
   if (!triple) {
     throw new Error(`No buddy build for ${process.platform}-${process.arch}. Set buddy.path to a local binary.`);
@@ -270,42 +311,141 @@ async function ensureManagedCli(
     }
   }
 
-  return vscode.window.withProgress(
+  const { release, token } = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: "Buddy",
       cancellable: false,
     },
     async (progress) => {
-      progress.report({ message: "Fetching buddy CLI release…" });
-      const { release, token } = await fetchRelease(source, versionSetting, options.interactiveAuth === true, log);
-      const asset = pickReleaseAsset(release.assets, triple.os, triple.arch);
-      if (!asset) {
-        const names = release.assets.map((a) => a.name).join(", ") || "(none)";
-        throw new Error(
-          `${source.id} ${release.tag_name} has no ${preferredAssetName(triple.os, triple.arch)} asset. Found: ${names}`
-        );
-      }
-
-      const dest = managedBinaryPath(storageRoot, key, release.tag_name, triple.exe);
-      if (!options.force && fs.existsSync(dest)) {
-        const next = nextCliState(state, release.tag_name, asset.name, now);
-        writeState(storageRoot, key, next);
-        await pruneOldCli(storageRoot, key, [next.tag, next.previousTag], log);
-        return dest;
-      }
-
-      const mb = asset.size > 0 ? `${(asset.size / (1024 * 1024)).toFixed(1)} MB` : "";
-      progress.report({ message: `Downloading ${asset.name}${mb ? ` (${mb})` : ""}…` });
-      log.appendLine(`Downloading ${asset.name} from ${source.id} ${release.tag_name}`);
-      await downloadAsset(source, asset, dest, token);
-      const next = nextCliState(state, release.tag_name, asset.name, now);
-      writeState(storageRoot, key, next);
-      await pruneOldCli(storageRoot, key, [next.tag, next.previousTag], log);
-      log.appendLine(`Installed ${dest}`);
-      return dest;
+      progress.report({ message: "Checking buddy releases…" });
+      return fetchRelease(source, versionSetting, options.interactiveAuth === true, log);
     }
   );
+
+  const pkg = triple.os === "darwin" ? pickPkgAsset(release.assets, release.tag_name) : undefined;
+  const binary = pickReleaseAsset(release.assets, triple.os, triple.arch);
+  const chosen = pkg
+    ? { asset: pkg, kind: "pkg" as const }
+    : binary
+      ? { asset: binary, kind: "binary" as const }
+      : undefined;
+  if (!chosen) {
+    const names = release.assets.map((a) => a.name).join(", ") || "(none)";
+    const wanted =
+      triple.os === "darwin"
+        ? `${preferredPkgName(release.tag_name)} or ${preferredAssetName(triple.os, triple.arch)}`
+        : preferredAssetName(triple.os, triple.arch);
+    throw new Error(`${source.id} ${release.tag_name} has no ${wanted} asset. Found: ${names}`);
+  }
+
+  if (chosen.kind === "binary") {
+    const dest = managedBinaryPath(storageRoot, key, release.tag_name, triple.exe);
+    if (!options.force && fs.existsSync(dest)) {
+      const next = nextCliState(state, release.tag_name, chosen.asset.name, now);
+      writeState(storageRoot, key, next);
+      await pruneOldCli(storageRoot, key, [next.tag, next.previousTag], log);
+      return dest;
+    }
+  }
+
+  if (!options.force && context.globalState.get(DECLINED_TAG_KEY) === release.tag_name) {
+    log.appendLine(`Skipping buddy ${release.tag_name} (previously declined)`);
+    return undefined;
+  }
+
+  const approved = await confirmInstall(release.tag_name, chosen.asset, chosen.kind, pkg ? false : triple.os === "darwin");
+  if (!approved) {
+    await context.globalState.update(DECLINED_TAG_KEY, release.tag_name);
+    log.appendLine(`User declined buddy ${release.tag_name}`);
+    return undefined;
+  }
+  await context.globalState.update(DECLINED_TAG_KEY, undefined);
+
+  if (chosen.kind === "pkg") {
+    return installMacPkg(context, source, chosen.asset, release.tag_name, token, log);
+  }
+
+  const dest = managedBinaryPath(storageRoot, key, release.tag_name, triple.exe);
+  const mb = chosen.asset.size > 0 ? `${(chosen.asset.size / (1024 * 1024)).toFixed(1)} MB` : "";
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Buddy",
+      cancellable: false,
+    },
+    async (progress) => {
+      progress.report({ message: `Downloading ${chosen.asset.name}${mb ? ` (${mb})` : ""}…` });
+      log.appendLine(`Downloading ${chosen.asset.name} from ${source.id} ${release.tag_name}`);
+      await downloadAsset(source, chosen.asset, dest, token);
+    }
+  );
+  const next = nextCliState(state, release.tag_name, chosen.asset.name, now);
+  writeState(storageRoot, key, next);
+  await pruneOldCli(storageRoot, key, [next.tag, next.previousTag], log);
+  log.appendLine(`Installed ${dest}`);
+  return dest;
+}
+
+async function confirmInstall(
+  tag: string,
+  asset: ReleaseAsset,
+  kind: "pkg" | "binary",
+  darwinBinaryFallback: boolean
+): Promise<boolean> {
+  const mb = asset.size > 0 ? ` (${(asset.size / (1024 * 1024)).toFixed(1)} MB)` : "";
+  const detail =
+    kind === "pkg"
+      ? `This downloads the macOS installer package ${asset.name}${mb} and opens it.`
+      : darwinBinaryFallback
+        ? `No installer package on this release; this downloads the ${asset.name} binary${mb} into extension storage.`
+        : `This downloads ${asset.name}${mb} into extension storage.`;
+  const choice = await vscode.window.showInformationMessage(
+    `Install buddy ${tag}?`,
+    { modal: true, detail },
+    "Install"
+  );
+  return choice === "Install";
+}
+
+async function installMacPkg(
+  context: vscode.ExtensionContext,
+  source: ReleaseSource,
+  asset: ReleaseAsset,
+  tag: string,
+  token: string | undefined,
+  log: vscode.OutputChannel
+): Promise<string | undefined> {
+  const pkgPath = path.join(os.tmpdir(), asset.name.replace(/[^A-Za-z0-9._-]/g, "_"));
+  const mb = asset.size > 0 ? `${(asset.size / (1024 * 1024)).toFixed(1)} MB` : "";
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Buddy",
+      cancellable: false,
+    },
+    async (progress) => {
+      progress.report({ message: `Downloading ${asset.name}${mb ? ` (${mb})` : ""}…` });
+      log.appendLine(`Downloading ${asset.name} from ${source.id} ${tag}`);
+      await downloadAsset(source, asset, pkgPath, token);
+    }
+  );
+  log.appendLine(`Opening installer ${pkgPath}`);
+  await vscode.env.openExternal(vscode.Uri.file(pkgPath));
+  const reload = await vscode.window.showInformationMessage(
+    `The buddy ${tag} installer is open. Reload the window after it finishes so the language server can start.`,
+    "Reload Window",
+    "Later"
+  );
+  const installed = findInstalledBuddy();
+  if (installed) {
+    log.appendLine(`Using buddy from package install: ${installed}`);
+    return installed;
+  }
+  if (reload === "Reload Window") {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+  return undefined;
 }
 
 function nextCliState(prev: CliState | undefined, tag: string, asset: string, lastCheck: number): CliState {
@@ -422,7 +562,7 @@ async function fetchRelease(
       source.provider === "gitlab"
         ? "Set GITLAB_TOKEN or GL_TOKEN."
         : source.host === "github.com"
-          ? "Sign in to GitHub (Buddy: Download CLI) or set GITHUB_TOKEN."
+          ? "Sign in to GitHub (Buddy: Install CLI) or set GITHUB_TOKEN."
           : "Set GITHUB_TOKEN or GH_TOKEN for this GitHub Enterprise host.";
     throw new Error(`No release for ${source.id} (${version}). If the repo is private, ${hint} ${lastErr?.message ?? ""}`.trim());
   }

@@ -9,7 +9,7 @@ Language features come from **`buddy lsp`** in the sibling CLI repo: [`../buddy`
 | Path | Role |
 |------|------|
 | `src/extension.ts` | Activate: resolve buddy, start `buddy lsp` (or `buddy.lsp.path`) over stdio |
-| `src/cli.ts` | PATH / `buddy.path` / GitHub Releases install into global storage |
+| `src/cli.ts` | PATH / macOS pkg install / prompted release (pkg on macOS, binary elsewhere) |
 | `src/mcp.ts` | Cursor-only: `buddy mcp setup` into `~/.cursor/mcp.json` |
 | `images/buddy.png` | Extension / marketplace icon (from `../buddy/internal/serve/buddy.png`) |
 | `syntaxes/buddy.tmLanguage.json` | TextMate grammar |
@@ -33,9 +33,10 @@ Default extension id: `virtualpete.buddy`. VSIX version is the git tag (`v0.2.0`
 ## Rules
 
 - Do **not** reimplement LSP features here. Change `buddy lsp` in `../buddy/internal/lsp` (then `make buddy` in that repo).
-- Settings: `buddy.path` (empty → PATH, then releases), `buddy.cli.version` (`latest` or a tag), `buddy.cli.repo` (`owner/name` or GitHub/GitLab URL; `CLI_REPO=` at package time), `buddy.cli.provider` (`auto` / `github` / `gitlab`; `CLI_PROVIDER=`), `buddy.lsp.path` (full command override), `buddy.mcp.setup` (`off` / `prompt` / `on`, Cursor only), `buddy.cellMode` (passed as `initializationOptions.cellMode`), `buddy.trace.server`.
+- Settings: `buddy.path` (empty → PATH / macOS pkg paths, then a versioned install prompt), `buddy.cli.version` (`latest` or a tag), `buddy.cli.repo` (`owner/name` or GitHub/GitLab URL; `CLI_REPO=` at package time), `buddy.cli.provider` (`auto` / `github` / `gitlab`; `CLI_PROVIDER=`), `buddy.lsp.path` (full command override), `buddy.mcp.setup` (`off` / `prompt` / `on`, Cursor only), `buddy.cellMode` (passed as `initializationOptions.cellMode`), `buddy.trace.server`.
 - MCP: call the resolved CLI (`buddy -y mcp setup --write --create --path ~/.cursor/mcp.json`). Do not merge `mcp.json` here.
-- Release assets on `virtualpeter/buddy` must be bare binaries named `buddy-{os}-{arch}[.exe]` (`darwin`/`linux`/`windows` × `amd64`/`arm64`).
+- Release assets: macOS prefers `buddy-<version>.pkg`; otherwise bare `buddy-{os}-{arch}[.exe]` (`darwin`/`linux`/`windows` × `amd64`/`arm64`). Always prompt before download; show the release tag.
+- `README.md` is the marketplace / extension-detail page: what it is and how to use it. Keep `make` / VSIX / release-tag instructions here, not in the README.
 - Keep the client thin. Grammar updates only when `.buddy` syntax changes.
 - No Jamf/tenant/auth work in this repo.
 - Publisher/repo URLs: `virtualpete` / `virtualpeter/buddy-extension`. Do not put org-specific tenant names in docs.
